@@ -8,7 +8,6 @@ if TYPE_CHECKING:
 
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.const import CONF_ENTITIES
 
 
 from .const import DOMAIN, CONF_PLATFORMS, CONF_ENTITIES

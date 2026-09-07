@@ -17,18 +17,14 @@ from .const import (
     CONF_PLATFORMS,
     CONF_ENTITY,
     CONF_ENTITIES,
-    CONF_GATEWAY,
     CONF_WORKER_COUNT,
     CONF_FILE_PATH,
     CONF_GENERATE_EVENTS,
     DOMAIN,
     LOGGER,
-    ALL_DEVICE_SUPPORTED_TYPES,
-    DEVICE_TYPE_TO_PLATFORM,
 )
 from .validate import config_schema, format_mac
 from .gateway import MyHOMEGatewayHandler
-from .device_factory import MyHOMEDeviceFactory
 from .config_flow_discovery import async_setup_discovery
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)

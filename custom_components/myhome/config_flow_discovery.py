@@ -1,17 +1,14 @@
 """Config flow discovery for MyHOME devices following OpenHAB patterns."""
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 
 from .const import (
     DOMAIN,
-    DEVICE_TYPE_TO_PLATFORM,
-    ALL_DEVICE_SUPPORTED_TYPES,
 )
-from .device_factory import MyHOMEDeviceFactory
 
 
 class MyHOMEDiscoveryConfigFlow:
