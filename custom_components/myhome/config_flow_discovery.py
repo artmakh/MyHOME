@@ -108,15 +108,24 @@ class MyHOMEDiscoveryConfigFlow:
             config_entry_id = discovery_data.get("config_entry_id")
             gateway_mac = discovery_data.get("gateway_mac")
             
+            # `via_device` (an identifiers tuple) is deprecated and stops working
+            # in HA 2027.8. Resolve the gateway's device entry and link to it by
+            # registry id; skip the link if the gateway is not registered yet.
+            gateway_device = device_registry.async_get_device(
+                identifiers={(DOMAIN, gateway_mac)}
+            )
+
             # Create device entry
-            device_entry = device_registry.async_get_or_create(
+            device_registry.async_get_or_create(
                 config_entry_id=config_entry_id,
                 identifiers={(DOMAIN, device_info["unique_id"])},
                 manufacturer="BTicino/Legrand",
                 name=device_info["name"],
                 model=f"MyHOME {device_info['device_type'].replace('_', ' ').title()}",
-                via_device=(DOMAIN, gateway_mac),
                 sw_version=device_info["properties"].get("firmware_version"),
+                **(
+                    {"via_device_id": gateway_device.id} if gateway_device else {}
+                ),
             )
             
             self.logger.debug("Created device registry entry for %s", device_info["name"])

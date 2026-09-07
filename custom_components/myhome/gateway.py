@@ -73,6 +73,23 @@ from .button import (
 from .device_factory import MyHOMEDeviceFactory
 
 
+def _as_str(value):
+    """Coerce an SSDP/UPnP-derived value to a plain string.
+
+    UPnP fields arrive as a list when a device advertises the same element more
+    than once, which happens on several BTicino gateways. The device registry
+    rejects non-string values -- it currently logs and falls back to str(), which
+    would render a list as "['BTicino S.p.A.']", and stops accepting them
+    altogether in HA 2026.12. Unwrap the list instead of stringifying it, so the
+    displayed value stays correct.
+    """
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return _as_str(value[0]) if value else None
+    return str(value)
+
+
 class MyHOMEGatewayHandler:
     """Manages a single MyHOME Gateway."""
 
@@ -99,6 +116,10 @@ class MyHOMEGatewayHandler:
         self._terminate_listener = False
         self._terminate_sender = False
         self.is_connected = False
+        # Device registry id of this gateway's own device entry, filled in by
+        # async_setup_entry once the entry exists. Entities link to it through
+        # DeviceInfo["via_device_id"].
+        self.ha_device_id: str | None = None
         self.listening_worker: asyncio.tasks.Task = None
         self.sending_workers: List[asyncio.tasks.Task] = []
         self.send_buffer = asyncio.Queue()
@@ -123,19 +144,19 @@ class MyHOMEGatewayHandler:
 
     @property
     def manufacturer(self) -> str:
-        return self.gateway.manufacturer
+        return _as_str(self.gateway.manufacturer)
 
     @property
     def name(self) -> str:
-        return f"{self.gateway.model_name} Gateway"
+        return f"{self.model} Gateway"
 
     @property
     def model(self) -> str:
-        return self.gateway.model_name
+        return _as_str(self.gateway.model_name)
 
     @property
     def firmware(self) -> str:
-        return self.gateway.firmware
+        return _as_str(self.gateway.firmware)
 
     async def test(self) -> Dict:
         return await OWNSession(gateway=self.gateway, logger=LOGGER).test_connection()
