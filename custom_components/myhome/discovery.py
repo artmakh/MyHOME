@@ -2,27 +2,18 @@
 
 import asyncio
 import logging
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional
 from datetime import datetime
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers import device_registry as dr
 
 from OWNd.message import (
     OWNMessage,
     OWNLightingEvent,
-    OWNLightingCommand,
     OWNAutomationEvent,
-    OWNAutomationCommand,
     OWNEnergyEvent,
     OWNHeatingEvent,
-    OWNHeatingCommand,
-    OWNDryContactEvent,
-    OWNAuxEvent,
-    OWNCENEvent,
-    OWNCENPlusEvent,
-    OWNAlarmEvent,
 )
 
 from .const import (

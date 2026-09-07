@@ -1,6 +1,6 @@
 """Code to handle a MyHome Gateway."""
 import asyncio
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 
 from homeassistant.const import (
     CONF_ENTITIES,
@@ -12,21 +12,10 @@ from homeassistant.const import (
     CONF_FRIENDLY_NAME,
 )
 from homeassistant.components.light import DOMAIN as LIGHT
-from homeassistant.components.switch import (
-    SwitchDeviceClass,
-    DOMAIN as SWITCH,
-)
 from homeassistant.components.button import DOMAIN as BUTTON
-from homeassistant.components.cover import DOMAIN as COVER
-from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
-    DOMAIN as BINARY_SENSOR,
-)
 from homeassistant.components.sensor import (
-    SensorDeviceClass,
     DOMAIN as SENSOR,
 )
-from homeassistant.components.climate import DOMAIN as CLIMATE
 
 from OWNd.connection import OWNSession, OWNEventSession, OWNCommandSession, OWNGateway
 from OWNd.message import (
@@ -61,9 +50,6 @@ from .const import (
     CONF_LONG_RELEASE,
     DOMAIN,
     LOGGER,
-    THING_STATE_REQ_TIMEOUT_SEC,
-    ALL_DEVICE_SUPPORTED_TYPES,
-    DEVICE_TYPE_TO_PLATFORM,
 )
 from .myhome_device import MyHOMEEntity
 from .button import (
@@ -71,6 +57,23 @@ from .button import (
     EnableCommandButtonEntity,
 )
 from .device_factory import MyHOMEDeviceFactory
+
+
+def _as_str(value):
+    """Coerce an SSDP/UPnP-derived value to a plain string.
+
+    UPnP fields arrive as a list when a device advertises the same element more
+    than once, which happens on several BTicino gateways. The device registry
+    rejects non-string values -- it currently logs and falls back to str(), which
+    would render a list as "['BTicino S.p.A.']", and stops accepting them
+    altogether in HA 2026.12. Unwrap the list instead of stringifying it, so the
+    displayed value stays correct.
+    """
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return _as_str(value[0]) if value else None
+    return str(value)
 
 
 class MyHOMEGatewayHandler:
@@ -99,6 +102,10 @@ class MyHOMEGatewayHandler:
         self._terminate_listener = False
         self._terminate_sender = False
         self.is_connected = False
+        # Device registry id of this gateway's own device entry, filled in by
+        # async_setup_entry once the entry exists. Entities link to it through
+        # DeviceInfo["via_device_id"].
+        self.ha_device_id: str | None = None
         self.listening_worker: asyncio.tasks.Task = None
         self.sending_workers: List[asyncio.tasks.Task] = []
         self.send_buffer = asyncio.Queue()
@@ -123,19 +130,19 @@ class MyHOMEGatewayHandler:
 
     @property
     def manufacturer(self) -> str:
-        return self.gateway.manufacturer
+        return _as_str(self.gateway.manufacturer)
 
     @property
     def name(self) -> str:
-        return f"{self.gateway.model_name} Gateway"
+        return f"{self.model} Gateway"
 
     @property
     def model(self) -> str:
-        return self.gateway.model_name
+        return _as_str(self.gateway.model_name)
 
     @property
     def firmware(self) -> str:
-        return self.gateway.firmware
+        return _as_str(self.gateway.firmware)
 
     async def test(self) -> Dict:
         return await OWNSession(gateway=self.gateway, logger=LOGGER).test_connection()
@@ -212,24 +219,27 @@ class MyHOMEGatewayHandler:
             else:
                 # Handle message for discovery following OpenHAB patterns
                 self.handle_discovery_message(message)
+
+                # Bound once per message: the dispatch below is the hot path for
+                # every frame arriving on the bus.
+                _platforms = self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS]
                 
                 # Continue with existing message processing
                 if isinstance(message, OWNEnergyEvent):
-                    if SENSOR in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS] and message.entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR]:
-                        for _entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES]:
-                            if isinstance(
-                                self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES][_entity],
-                                MyHOMEEntity,
-                            ):
-                                self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES][_entity].handle_event(message)
-                    else:
+                    if SENSOR not in _platforms or message.entity not in _platforms[SENSOR]:
                         continue
-                elif (
-                    isinstance(message, OWNLightingEvent)
-                    or isinstance(message, OWNAutomationEvent)
-                    or isinstance(message, OWNDryContactEvent)
-                    or isinstance(message, OWNAuxEvent)
-                    or isinstance(message, OWNHeatingEvent)
+                    for _entity in _platforms[SENSOR][message.entity][CONF_ENTITIES].values():
+                        if isinstance(_entity, MyHOMEEntity):
+                            _entity.handle_event(message)
+                elif isinstance(
+                    message,
+                    (
+                        OWNLightingEvent,
+                        OWNAutomationEvent,
+                        OWNDryContactEvent,
+                        OWNAuxEvent,
+                        OWNHeatingEvent,
+                    ),
                 ):
                     if not message.is_translation:
                         is_event = False
@@ -314,30 +324,24 @@ class MyHOMEGatewayHandler:
                                 )
                         if not is_event:
                             if isinstance(message, OWNLightingEvent) and message.brightness_preset:
-                                if isinstance(
-                                    self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][LIGHT][message.entity][CONF_ENTITIES][LIGHT],
-                                    MyHOMEEntity,
-                                ):
-                                    await self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][LIGHT][message.entity][CONF_ENTITIES][LIGHT].async_update()
+                                _light = _platforms[LIGHT][message.entity][CONF_ENTITIES][LIGHT]
+                                if isinstance(_light, MyHOMEEntity):
+                                    await _light.async_update()
                             else:
-                                for _platform in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS]:
-                                    if _platform != BUTTON and message.entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform]:
-                                        for _entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform][message.entity][CONF_ENTITIES]:
-                                            if (
-                                                isinstance(
-                                                    self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform][message.entity][CONF_ENTITIES][_entity],
-                                                    MyHOMEEntity,
-                                                )
-                                                and not isinstance(
-                                                    self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform][message.entity][CONF_ENTITIES][_entity],
-                                                    DisableCommandButtonEntity,
-                                                )
-                                                and not isinstance(
-                                                    self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform][message.entity][CONF_ENTITIES][_entity],
-                                                    EnableCommandButtonEntity,
-                                                )
-                                            ):
-                                                self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform][message.entity][CONF_ENTITIES][_entity].handle_event(message)
+                                for _platform, _devices in _platforms.items():
+                                    if _platform == BUTTON or message.entity not in _devices:
+                                        continue
+                                    for _entity in _devices[message.entity][CONF_ENTITIES].values():
+                                        if isinstance(
+                                            _entity, MyHOMEEntity
+                                        ) and not isinstance(
+                                            _entity,
+                                            (
+                                                DisableCommandButtonEntity,
+                                                EnableCommandButtonEntity,
+                                            ),
+                                        ):
+                                            _entity.handle_event(message)
                     else:
                         LOGGER.debug(
                             "%s Ignoring translation message `%s`",
@@ -400,7 +404,7 @@ class MyHOMEGatewayHandler:
                         self.log_id,
                         message.human_readable_log,
                     )
-                elif isinstance(message, OWNGatewayEvent) or isinstance(message, OWNGatewayCommand):
+                elif isinstance(message, (OWNGatewayEvent, OWNGatewayCommand)):
                     LOGGER.info(
                         "%s %s",
                         self.log_id,
